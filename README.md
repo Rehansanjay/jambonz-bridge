@@ -55,8 +55,27 @@ returns a JSON array of verbs that jambonz executes in sequence:
      {"verb":"say","text":"..."}]
 
 That is where the bridge sits: a `listen` verb forking caller audio to a
-websocket at 8 kHz, with `bidirectionalAudio` enabled for the return path, and
-`killAudio` as the counterpart to Pipecat's `InterruptionFrame`.
+websocket, with `bidirectionalAudio` enabled for the return path, and
+`killAudio` as the counterpart to Pipecat's `InterruptionFrame`. The fork rate
+is set per call by the verb's `sampleRate`; 16 kHz is the default and 8 kHz is
+valid for narrowband SIP.
+
+## Prior art
+
+`usetuner/tuner-pipecat-sdk-python` carries a `JambonzFrameSerializer` inline in
+`examples/nova_clinic_pipecat/jambonz_server.py`, written because -- in their
+words -- "Pipecat ships no built-in Jambonz serializer, so we provide one inline
+here". It subclasses `FrameSerializer`, resamples both directions and sends raw
+L16 PCM with no JSON envelope.
+
+It is an example inside one company's SDK rather than something a Pipecat user
+can import, so the gap in `pipecat/serializers/` stands. It is useful as a
+reference and as evidence that the gap costs people real work.
+
+One open question it leaves: its caveats say the `listen` verb is
+unidirectional by default and suggest `dial` with `type: "ws"`, while the verb
+array it actually ships uses `listen` with `bidirectionalAudio` enabled and
+calls that the canonical mechanism. Worth settling before building on either.
 
 ## Running step 1
 
