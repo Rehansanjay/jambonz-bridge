@@ -72,10 +72,19 @@ It is an example inside one company's SDK rather than something a Pipecat user
 can import, so the gap in `pipecat/serializers/` stands. It is useful as a
 reference and as evidence that the gap costs people real work.
 
-One open question it leaves: its caveats say the `listen` verb is
-unidirectional by default and suggest `dial` with `type: "ws"`, while the verb
-array it actually ships uses `listen` with `bidirectionalAudio` enabled and
-calls that the canonical mechanism. Worth settling before building on either.
+Its caveats say the `listen` verb is unidirectional by default and suggest
+`dial` with `type: "ws"` instead. The documentation says otherwise:
+`bidirectionalAudio.enabled` defaults to **true**, `streaming` defaults to
+false, and `dial` with a websocket type is not mentioned as a two-way audio
+mechanism at all. So the verb array that file actually ships -- `listen` with
+`bidirectionalAudio` -- is the documented path, and its own caveat is stale.
+
+`killAudio` is documented as flushing "any audio that is playing out from the
+bidirectional socket as well as any buffered audio". What that leaves open is
+the race: whether a chunk written by the socket's other end in the same instant
+is flushed with the rest or lands after it. That boundary is what Pipecat's
+`InterruptionFrame` has to be built around, and it is the next thing to pin
+down.
 
 ## Running step 1
 
