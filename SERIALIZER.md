@@ -62,15 +62,35 @@ ends.
 - `killAudio` flushes "any audio that is playing out from the bidirectional
   socket as well as any buffered audio".
 
-## What it does not settle
+## What the documentation does not settle, answered in the community
 
-Whether a chunk written from our end of the socket at the same moment
-`killAudio` is processed is flushed with the rest, or lands after it and plays
-over the caller. That boundary decides how `InterruptionFrame` must be handled:
-if there is no guarantee, the serializer has to stop writing before sending
-`killAudio` and wait for something, rather than assuming the flush covers it.
+Whether a chunk written from our end at the same moment `killAudio` is
+processed is flushed with the rest, or lands after it and plays over the
+caller. Asked in the jambonz community Slack on 7 Oct 2026; Sam Machin
+answered from operational experience:
 
-This is the one open question worth asking rather than guessing.
+> the ordering of messages on the socket isn't 100%, we've seen clients that
+> sometimes prioritise smaller messages so its best to have a small break
+> after a killAudio before you send the next stream, 50-100ms should be plenty
+
+So **ordering is not guaranteed**, and the cause is client-side message
+prioritisation rather than anything tunable on our end. A small control
+message can be reordered relative to larger audio frames.
+
+### What that makes the serializer do
+
+On `InterruptionFrame` it is not enough to send `killAudio` and resume. The
+serializer has to send it and then **refuse to write audio for 50-100ms**,
+which means carrying state: `serialize()` will be called again with the next
+bot audio well inside that window and has to hold it.
+
+Pipecat's interruption model assumes a processor can simply stop. Over jambonz
+it has to stop *and wait*, so the guard belongs in the serializer rather than
+anywhere upstream of it.
+
+The cost is 50-100ms added to every barge-in recovery, against a
+first-audio budget measured here at 0.44-0.73s. Worth stating in the guide
+rather than discovering in production.
 
 ## Prior art
 
