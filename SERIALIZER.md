@@ -92,6 +92,60 @@ The cost is 50-100ms added to every barge-in recovery, against a
 first-audio budget measured here at 0.44-0.73s. Worth stating in the guide
 rather than discovering in production.
 
+## What a live call settles
+
+A 30-second call from a registered softphone through jambonz Cloud, forked to
+`probe_jambonz_socket.py` with `listen` asking for 16 kHz. 11 October 2026.
+
+    binary frames : 1514
+    total bytes   : 968960
+    frame sizes   : [640]
+    text frames   : 1
+    wall clock    : 30.03s
+    audio implied : 30.28s at 16000 Hz, 16-bit mono
+    ratio         : 1.01
+
+**The rate the verb asks for is the rate that arrives.** Ratio 1.01 across
+thirty seconds. Worth stating because the opposite was assumed here first, got
+written into the README, and was wrong: this project claimed jambonz forks at
+8 kHz. It does not. It forks at whatever `sampleRate` the verb set, and the
+default is 16 kHz.
+
+**Framing is fixed at 20 ms.** One distinct frame size across 1514 frames:
+640 bytes, which is 320 samples of 16-bit mono, which is exactly 20 ms at
+16 kHz. `deserialize` needs no variable-length path.
+
+**The control path does not share the socket -- the metadata does, once.**
+This answers the design question above, and the answer is better than feared.
+Exactly one TEXT frame arrives, *before any audio*, and then the socket is pure
+binary for the rest of the call:
+
+    {"sampleRate":16000,"mixType":"mono","callSid":"3e5d869a-...",
+     "direction":"inbound","from":"rehan","to":"1234","sipStatus":200,
+     "sipReason":"OK","callStatus":"in-progress","accountSid":"87f4ab51-...",
+     "traceId":"ccb228b2..."}
+
+It is a preamble, not a channel. So `deserialize` does not branch per frame
+between JSON and PCM. It reads one metadata frame at the start and treats
+everything after it as L16.
+
+### What that makes the serializer do
+
+Take the rate **from the preamble**, not from `InputParams`. The verb and the
+serializer were supposed to "agree" on a rate; they do not have to, because the
+socket states it. A params field can still override for a narrowband carrier,
+but the wire is the source of truth and the default should be to believe it.
+
+The preamble also carries `callSid`, `from`, `to` and `traceId`, which is
+everything needed to correlate a Pipecat session with a jambonz call in logs
+without threading identifiers through the verb's `url`.
+
+Note the shape is not unique to jambonz. Cosmo's realtime SDK opens its
+websocket with a `ws-audio-format` frame carrying the same three facts --
+input rate, output rate, channel count -- before any audio. Two unrelated
+vendors arrived at the same preamble design, which is an argument for the
+serializer treating it as the expected pattern rather than a jambonz quirk.
+
 ## Prior art
 
 `usetuner/tuner-pipecat-sdk-python`, `examples/nova_clinic_pipecat/jambonz_server.py`:

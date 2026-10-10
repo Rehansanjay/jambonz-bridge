@@ -16,8 +16,12 @@ options and jambonz is not one of them.
 - **Step 2 -- done.** The LiveKit agent was already minimal at 77 lines, so the
   comparison is the two files side by side rather than a rewrite.
 - **Step 3 -- in progress.** The concept map, written from having run both.
-- **Step 4 -- started.** jambonz Cloud account, SIP client, softphone registered,
-  a call traced end to end. The serializer comes next.
+- **Step 4 -- measured.** jambonz Cloud account, SIP client, softphone
+  registered, and a 30-second call forked to a websocket and counted. The three
+  things the serializer needed to know are now facts rather than readings of the
+  docs: the rate is what the verb asked for, framing is fixed at 20 ms, and the
+  one TEXT frame is a preamble rather than a control channel. Numbers in
+  `SERIALIZER.md`. The serializer itself comes next.
 
 ## What running it has turned up so far
 
@@ -60,6 +64,13 @@ websocket, with `bidirectionalAudio` enabled for the return path, and
 is set per call by the verb's `sampleRate`; 16 kHz is the default and 8 kHz is
 valid for narrowband SIP.
 
+Measured on a live call rather than taken from the docs: asking for 16 kHz
+delivers 16 kHz (ratio 1.01 over thirty seconds), frames are a fixed 640 bytes
+which is exactly 20 ms, and the socket opens with one JSON frame carrying the
+rate and the call identifiers before it goes pure binary. An earlier version of
+this file said jambonz forks at 8 kHz. That was an assumption, it was wrong, and
+this is what replaced it.
+
 ## Prior art
 
 `usetuner/tuner-pipecat-sdk-python` carries a `JambonzFrameSerializer` inline in
@@ -83,8 +94,22 @@ mechanism at all. So the verb array that file actually ships -- `listen` with
 bidirectional socket as well as any buffered audio". What that leaves open is
 the race: whether a chunk written by the socket's other end in the same instant
 is flushed with the rest or lands after it. That boundary is what Pipecat's
-`InterruptionFrame` has to be built around, and it is the next thing to pin
-down.
+`InterruptionFrame` has to be built around. Sam Machin answered it from
+operational experience in the jambonz community Slack on 7 Oct 2026: ordering
+is not guaranteed, and a 50-100ms pause after `killAudio` is the fix. The
+consequence for the serializer is in `SERIALIZER.md`.
+
+## Running the probe
+
+    ngrok http 8080
+    set PUBLIC_HOST=<the ngrok host, no scheme>
+    .venv\Scripts\python.exe -u probe_jambonz_socket.py
+
+Then point a jambonz application's calling webhook at `https://<host>/`, set it
+as the account's device calling application, and dial anything from a registered
+softphone. You will hear nothing -- `listen` forks audio and the app returns no
+`say` or `play`, so silence is correct. Talk for thirty seconds and hang up; the
+summary prints when the socket closes.
 
 ## Running step 1
 
