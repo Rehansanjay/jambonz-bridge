@@ -18,11 +18,20 @@ Run it, expose it, point the application at it, call in and talk:
 
     ngrok http 8080
     set PUBLIC_HOST=<the ngrok host, no scheme>
-    .venv\Scripts\python.exe probe_jambonz_socket.py
+    .venv\Scripts\python.exe -u probe_jambonz_socket.py
 
 Then in the jambonz portal: a new application whose calling webhook is
 https://<PUBLIC_HOST>/ , and Settings -> Device calling application pointing at
 it. Dial anything from the softphone.
+
+The -u only matters if you redirect this anywhere. Python block-buffers stdout
+to a file or a pipe, so without it a run you wanted to keep writes nothing until
+the process ends and looks, while you are watching it, like a run that failed.
+
+The closing summary is printed when the socket closes, which is when the call
+ends -- so hang up before reading the ratio. It is only meaningful for audio
+that arrived in real time: feed this from anything faster and the ratio climbs
+above 1.0 for reasons that have nothing to do with the sample rate.
 """
 
 import json
