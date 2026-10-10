@@ -146,6 +146,32 @@ input rate, output rate, channel count -- before any audio. Two unrelated
 vendors arrived at the same preamble design, which is an argument for the
 serializer treating it as the expected pattern rather than a jambonz quirk.
 
+## What writing it turned up
+
+**Pipecat's stream resampler does not emit one chunk per chunk.** It buffers and
+flushes in bursts. Measured on `create_stream_resampler`, 16 kHz to 24 kHz, in
+640-byte frames:
+
+    chunk 1: in 640 -> out 0
+    chunk 2: in 640 -> out 0
+    chunk 3: in 640 -> out 0
+    chunk 4: in 640 -> out 3300
+
+So `serialize` and `deserialize` return `None` most of the time and a large
+buffer occasionally, and neither the serializer nor anything testing it may
+assume a frame in means a frame out. The first version of the tests here did
+assume it and failed against a correct serializer -- worth saying plainly,
+because the failure looks like a bug in the code under test.
+
+Over 20 frames the throughput settles to about 86% of the arithmetic ideal, the
+remainder being the tail still held in the buffer. Tests assert a band rather
+than an exact byte count for that reason.
+
+This is also why `InputParams.resampler_clear_after_secs` matters on a telephony
+transport: the base default clears resampler history after 0.2s of silence, and
+a caller who pauses mid-sentence can exceed that. Genesys sets it to `None` for
+exactly this reason, and jambonz has the same irregular-gap problem.
+
 ## Prior art
 
 `usetuner/tuner-pipecat-sdk-python`, `examples/nova_clinic_pipecat/jambonz_server.py`:

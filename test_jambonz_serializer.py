@@ -81,6 +81,14 @@ async def connected(**kwargs) -> JambonzFrameSerializer:
     return serializer
 
 
+# Pipecat's stream resampler does not emit one chunk per chunk. It buffers and
+# flushes in bursts -- measured here as three empty returns and then everything
+# at once on the fourth. So nothing in these tests may assume that one frame in
+# produces one frame out; they pump a run of frames and look at the total, which
+# is also what a real call does.
+PUMP = 20
+
+
 @pytest.mark.asyncio
 async def test_the_rate_comes_from_the_wire_not_from_params():
     """The verb sets the fork rate per call and the socket states it in the
@@ -88,12 +96,21 @@ async def test_the_rate_comes_from_the_wire_not_from_params():
     the caller to keep a constant in step with the verb array."""
     serializer = await connected()
 
-    out = await serializer.deserialize(a_frame())
+    frames = [await serializer.deserialize(a_frame()) for _ in range(PUMP)]
+    audio = [f for f in frames if f is not None]
 
-    assert isinstance(out, InputAudioRawFrame)
-    assert out.sample_rate == PIPELINE_RATE  # resampled for the pipeline
-    assert out.num_channels == 1
+    assert audio, "a run of audio frames produced nothing at all"
+    assert all(isinstance(f, InputAudioRawFrame) for f in audio)
+    assert all(f.sample_rate == PIPELINE_RATE for f in audio)  # resampled for the pipeline
+    assert all(f.num_channels == 1 for f in audio)
     assert serializer.jambonz_sample_rate == JAMBONZ_RATE  # read, not assumed
+
+    # 20 frames of 20 ms is 400 ms, which at the pipeline rate is this many
+    # bytes. The resampler is still holding a tail, so allow for that rather
+    # than pretending the arithmetic is exact.
+    ideal = PUMP * FRAME_BYTES * PIPELINE_RATE // JAMBONZ_RATE
+    got = sum(len(f.audio) for f in audio)
+    assert 0.7 * ideal <= got <= 1.05 * ideal, f"{got} bytes out for an ideal of {ideal}"
 
 
 @pytest.mark.asyncio
@@ -112,15 +129,25 @@ async def test_audio_goes_out_as_raw_bytes_with_no_envelope():
     bytes -- and a str here would be sent as a TEXT frame and treated as
     control, not audio."""
     serializer = await connected()
+    out_bytes = 960  # 20 ms at the pipeline rate
 
-    out = await serializer.serialize(
-        OutputAudioRawFrame(audio=a_frame(960), sample_rate=PIPELINE_RATE, num_channels=1)
-    )
+    sent = [
+        await serializer.serialize(
+            OutputAudioRawFrame(audio=a_frame(out_bytes), sample_rate=PIPELINE_RATE, num_channels=1)
+        )
+        for _ in range(PUMP)
+    ]
+    written = [s for s in sent if s is not None]
 
-    assert isinstance(out, bytes)
-    assert not isinstance(out, str)
-    # 960 bytes at 24 kHz is 20 ms; the same 20 ms at 16 kHz is 640 bytes.
-    assert out == b"" or abs(len(out) - FRAME_BYTES) <= 64
+    assert written, "a run of bot audio produced nothing to write"
+    for chunk in written:
+        assert isinstance(chunk, bytes)
+        assert not isinstance(chunk, str)  # a str would go out as TEXT, i.e. control
+
+    # 400 ms at the pipeline rate, resampled down to the fork rate.
+    ideal = PUMP * out_bytes * JAMBONZ_RATE // PIPELINE_RATE
+    got = sum(len(c) for c in written)
+    assert 0.7 * ideal <= got <= 1.05 * ideal, f"{got} bytes out for an ideal of {ideal}"
 
 
 @pytest.mark.asyncio
@@ -146,18 +173,27 @@ async def test_audio_is_held_briefly_after_killaudio():
     well inside that window.
     """
     serializer = await connected()
+
+    def bot_audio() -> OutputAudioRawFrame:
+        return OutputAudioRawFrame(
+            audio=a_frame(960), sample_rate=PIPELINE_RATE, num_channels=1
+        )
+
     await serializer.serialize(InterruptionFrame())
 
-    immediately = await serializer.serialize(
-        OutputAudioRawFrame(audio=a_frame(960), sample_rate=PIPELINE_RATE, num_channels=1)
-    )
-    assert immediately is None, "audio sent inside the guard window can play over the caller"
+    # Every frame inside the window, not just the first: Pipecat keeps handing
+    # over the interrupted turn's audio and all of it has to be withheld.
+    inside = [await serializer.serialize(bot_audio()) for _ in range(5)]
+    assert all(
+        s is None for s in inside
+    ), "audio sent inside the guard window can play over the caller"
 
     time.sleep(0.12)
-    after = await serializer.serialize(
-        OutputAudioRawFrame(audio=a_frame(960), sample_rate=PIPELINE_RATE, num_channels=1)
-    )
-    assert isinstance(after, bytes) and after, "the guard must open again, not latch shut"
+
+    after = [await serializer.serialize(bot_audio()) for _ in range(PUMP)]
+    written = [s for s in after if s is not None]
+    assert written, "the guard must open again, not latch shut"
+    assert all(isinstance(s, bytes) for s in written)
 
 
 @pytest.mark.asyncio
