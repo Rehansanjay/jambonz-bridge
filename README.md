@@ -130,7 +130,15 @@ the six lines to speak and how to speak them, so two runs are comparable.
     .venv\Scripts\python.exe -u jambonz_bot.py
 
 A real Pipecat bot answering a real jambonz call, using a byte-for-byte copy of
-the serializer in pipecat-ai/pipecat#6112. [VERIFICATION.md](VERIFICATION.md) is
+the serializer in pipecat-ai/pipecat#6112.
+
+`fake_jambonz.py` drives that same bot without a phone -- it connects to the
+websocket, sends the preamble, streams 20 ms frames and a DTMF event, and
+reports what came back. It cannot test speech, since a tone is not words, but it
+covers everything up to the LLM:
+
+    .venv\Scripts\python.exe -u jambonz_bot.py          # one terminal
+    .venv\Scripts\python.exe fake_jambonz.py            # the other [VERIFICATION.md](VERIFICATION.md) is
 the test card: five cases, what to press, and what counts as a pass. No carrier
 needed -- a softphone forced to PCMU gives the same 8 kHz geometry as a G.711
 PSTN leg.
