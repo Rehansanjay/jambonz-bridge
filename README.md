@@ -135,7 +135,9 @@ the test card: five cases, what to press, and what counts as a pass. No carrier
 needed -- a softphone forced to PCMU gives the same 8 kHz geometry as a G.711
 PSTN leg.
 
-[docs/pipecat.md](docs/pipecat.md) is the page for docs.jambonz.org.
+[docs/pipecat.mdx](docs/pipecat.mdx) is the page for docs.jambonz.org, written
+in jambonz-fern-config's house style; [docs/FERN-PR.md](docs/FERN-PR.md) has the
+two commands to apply it.
 
 ## License
 
