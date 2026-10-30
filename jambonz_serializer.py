@@ -1,45 +1,25 @@
-"""A Pipecat FrameSerializer for jambonz's `listen` verb.
+#
+# Copyright (c) 2024-2026, Daily
+#
+# SPDX-License-Identifier: BSD 2-Clause License
+#
 
-Pipecat ships serializers for Twilio, Telnyx, Plivo, Exotel, Vonage and Genesys.
-There is none for jambonz, so a Pipecat developer choosing a phone layer has six
-options and jambonz is not one of them. This is that file.
-
-Everything here that is a number or a shape came off a real call on 11 Oct 2026,
-measured with `probe_jambonz_socket.py`. The working is in SERIALIZER.md. Three
-things make it differ from the Exotel serializer it is closest to:
-
-1. **Audio has no envelope.** Exotel base64s PCM into a JSON `media` event.
-   jambonz sends raw 16-bit signed little-endian mono on the socket, so
-   `serialize` returns `bytes` for audio and `deserialize` goes straight to the
-   resampler with no parsing step.
-
-2. **The rate is not a constant.** Exotel hardcodes 8000. jambonz sets the fork
-   rate per call through the verb's `sampleRate` and then *states it* in a JSON
-   preamble before any audio. So the rate is read from the wire; a params
-   override exists for odd cases but the default is to believe the socket.
-
-3. **An interruption cannot just stop.** `killAudio` flushes what is playing,
-   but ordering on the socket is not guaranteed -- small control messages can be
-   prioritised ahead of larger audio frames, so a chunk written in the same
-   instant can land *after* the flush and play over the caller. The fix, from
-   Sam Machin in the jambonz community Slack on 7 Oct 2026, is to leave a
-   50-100ms gap. Pipecat's interruption model has no place to put that, so the
-   serializer holds the frames itself.
-
-Checked by `test_jambonz_serializer.py`, which needs no phone call.
-"""
-
-from __future__ import annotations
+"""jambonz WebSocket frame serializer for audio streaming."""
 
 import json
-import time
 from typing import Any
 
+from loguru import logger
+
+from pipecat.audio.dtmf.types import KeypadEntry
 from pipecat.audio.utils import create_stream_resampler
 from pipecat.frames.frames import (
     AudioRawFrame,
+    CancelFrame,
+    EndFrame,
     Frame,
     InputAudioRawFrame,
+    InputDTMFFrame,
     InterruptionFrame,
     OutputTransportMessageFrame,
     OutputTransportMessageUrgentFrame,
@@ -49,54 +29,130 @@ from pipecat.serializers.base_serializer import FrameSerializer
 
 
 class JambonzFrameSerializer(FrameSerializer):
-    """Converts between Pipecat frames and the jambonz `listen` websocket."""
+    """Serializer for the jambonz ``listen`` verb's WebSocket protocol.
+
+    jambonz forks call audio to a WebSocket through the ``listen`` verb, with
+    ``bidirectionalAudio`` providing the return path. The wire format differs
+    from the other telephony serializers in three ways:
+
+    - **Audio has no envelope.** Audio arrives and leaves as raw 16-bit signed
+      little-endian mono PCM, not base64 inside a JSON event.
+    - **Text and audio share the socket.** The first text frame is the
+      preamble; later ones are events. With ``passDtmf`` set, a digit arrives
+      as ``{"event": "dtmf", "dtmf": "5", ...}``, and ``mark`` and ``playDone``
+      replies arrive the same way. Only the first is read as the preamble, so
+      an event cannot overwrite the call's identifiers.
+    - **The audio geometry is per call.** The verb's ``sampleRate`` and
+      ``mixType`` are stated by the server in a JSON preamble sent before any
+      audio, so both are read from the connection rather than configured here.
+      Only ``mono`` is handled; ``stereo`` and ``mixed`` carry two channels,
+      which this serializer would misread as mono at twice the rate.
+    - **The bot can end the call.** Sending ``disconnect`` ends the ``listen``
+      verb, after which jambonz runs the verb's ``actionHook`` if it has one
+      and otherwise hangs up. No API credentials are involved, unlike Twilio.
+    - **Interruptions need no gap.** ``killAudio`` flushes playing and
+      buffered audio, and jambonz reads the socket on a single loop, so binary
+      frames sent after it are queued normally rather than racing it. Pipecat's
+      transport sends sequentially and drops its own queued output on an
+      interruption, so sending ``killAudio`` is sufficient on its own.
+
+    The verb needs three things set explicitly::
+
+        {
+            "verb": "listen",
+            "url": "wss://your-bot.example.com/ws",
+            "sampleRate": 16000,
+            "mixType": "mono",
+            "bidirectionalAudio": {
+                "enabled": true,
+                "streaming": true,
+                "sampleRate": 16000
+            }
+        }
+
+    - ``streaming`` defaults to **false**, and binary audio sent back is
+      ignored entirely while it is. Nothing reports this; the caller simply
+      hears nothing.
+    - ``sampleRate`` defaults to **8000**. The other allowed values are 16000,
+      24000, 48000 and 64000.
+    - ``bidirectionalAudio.sampleRate`` has no default. Omitted, the audio you
+      send is read at the call's negotiated codec rate -- 8 kHz for PCMU and
+      PCMA, higher for a wideband codec -- so it depends on the carrier and
+      should always be stated.
+
+      jambonz itself does not require the two rates to be equal; it resamples
+      whatever arrives at ``bidirectionalAudio.sampleRate``. The constraint is
+      this serializer's: it sends at the ``sampleRate`` it read from the
+      preamble, and nothing tells it the return rate. **So with this
+      serializer, set ``bidirectionalAudio.sampleRate`` to the same value as
+      ``sampleRate``.** Mismatched, playback runs fast or slow.
+
+    Example::
+
+        serializer = JambonzFrameSerializer()
+
+        transport = FastAPIWebsocketTransport(
+            websocket=websocket,
+            params=FastAPIWebsocketParams(serializer=serializer),
+        )
+
+    Docs: https://docs.jambonz.org/verbs/verbs/listen
+    """
 
     class InputParams(FrameSerializer.InputParams):
-        """Configuration for JambonzFrameSerializer.
+        """Configuration parameters for JambonzFrameSerializer.
 
         Parameters:
-            jambonz_sample_rate: Override for the fork rate. Leave as None --
-                the preamble states the rate the verb actually got, and a
-                constant here is one more thing to keep in step with the verb
-                array. Only useful if a deployment strips the preamble.
-            sample_rate: Override for the pipeline input rate, which otherwise
-                comes from the pipeline at setup.
-            kill_audio_guard_secs: How long to withhold audio after sending
-                `killAudio`. 0.1 is the top of the 50-100ms Sam Machin
-                suggested; the cost is paid once per barge-in.
+            jambonz_sample_rate: Override for the rate jambonz is forking at.
+                Leave as None so the rate is taken from the connection's
+                preamble, which is what the ``listen`` verb actually negotiated.
+            sample_rate: Optional override for the pipeline input sample rate.
+            disconnect_on_end: Whether to send ``disconnect`` when the pipeline
+                ends, which ends the ``listen`` verb so jambonz runs the verb's
+                ``actionHook`` or hangs up. The jambonz equivalent of Twilio's
+                ``auto_hang_up``, and unlike it needs no API credentials.
+                Defaults to True.
+            resampler_clear_after_secs: Inherited from FrameSerializer. Defaults
+                to None here, since callers pause mid-sentence and the resampler
+                should not discard its history over an ordinary gap.
         """
 
         jambonz_sample_rate: int | None = None
         sample_rate: int | None = None
-        kill_audio_guard_secs: float = 0.1
+        disconnect_on_end: bool = True
+        resampler_clear_after_secs: float | None = None
 
     def __init__(self, params: InputParams | None = None, **kwargs):
-        """Initialize the serializer.
+        """Initialize the JambonzFrameSerializer.
 
         Args:
             params: Configuration parameters.
-            **kwargs: Passed to FrameSerializer (e.g. name).
+            **kwargs: Additional arguments passed to FrameSerializer.
         """
         params = params or JambonzFrameSerializer.InputParams()
         super().__init__(params, **kwargs)
         self._params: JambonzFrameSerializer.InputParams = params
 
-        # The fork rate. None until the preamble arrives, unless overridden --
-        # deliberately not defaulted to 16000, so that a missing preamble shows
-        # up as "I don't know" rather than as plausible-sounding wrong audio.
+        # Left unset until the preamble arrives rather than defaulting, so a
+        # connection without one fails loudly instead of resampling from a rate
+        # that was never negotiated.
         self._jambonz_sample_rate: int | None = params.jambonz_sample_rate
-        self._sample_rate: int = 0  # the pipeline's rate, filled in by setup()
+        self._sample_rate: int = 0
 
-        # Carried from the preamble purely so a Pipecat session can be matched
-        # to a jambonz call in logs. They arrive free; the alternative is
-        # threading identifiers through the verb's url.
         self._call_sid: str | None = None
         self._trace_id: str | None = None
         self._call_meta: dict[str, Any] = {}
-
-        # Wall clock, not a counter: the guard has to survive whatever the
-        # pipeline is doing between calls to serialize().
-        self._guard_until: float = 0.0
+        # jambonz sends exactly one preamble, immediately, and every text frame
+        # after it is an event. Without this, a DTMF digit went through the
+        # preamble handler and replaced the call's identifiers with None.
+        self._preamble_seen: bool = False
+        # EndFrame and CancelFrame can both arrive on one shutdown, and a
+        # second disconnect would be sent on a socket jambonz has closed.
+        self._disconnect_sent: bool = False
+        self._mix_type: str | None = None
+        # The preamble arrives once but audio arrives fifty times a second, so
+        # an unusable mixType has to be reported once rather than per frame.
+        self._warned_mix_type: bool = False
 
         self._input_resampler = create_stream_resampler(
             clear_after_secs=self._params.resampler_clear_after_secs
@@ -105,82 +161,170 @@ class JambonzFrameSerializer(FrameSerializer):
             clear_after_secs=self._params.resampler_clear_after_secs
         )
 
-    # ── What the preamble told us ──────────────────────────────────
-
     @property
     def jambonz_sample_rate(self) -> int | None:
-        """The fork rate for this call, as stated by the socket."""
+        """The rate jambonz is forking this call at, from the preamble."""
         return self._jambonz_sample_rate
 
     @property
+    def mix_type(self) -> str | None:
+        """The channel layout jambonz stated in the preamble, if it stated one."""
+        return self._mix_type
+
+    @property
     def call_sid(self) -> str | None:
-        """jambonz's call identifier, for correlating logs."""
+        """The jambonz call identifier, for correlating with jambonz logs."""
         return self._call_sid
 
     @property
     def trace_id(self) -> str | None:
-        """jambonz's trace identifier, for correlating logs."""
+        """The jambonz trace identifier, for correlating with jambonz logs."""
         return self._trace_id
 
     @property
     def call_meta(self) -> dict[str, Any]:
-        """The whole preamble, for anything this class does not name."""
+        """The full preamble, for fields this class does not expose."""
         return dict(self._call_meta)
 
-    # ── Lifecycle ──────────────────────────────────────────────────
-
     async def setup(self, setup: FrameProcessorSetup):
-        """Take the pipeline's input rate.
+        """Set up the serializer with pipeline configuration.
 
         Args:
-            setup: Pipeline configuration.
+            setup: Configuration object containing setup parameters.
         """
         self._sample_rate = self._params.sample_rate or setup.audio_in_sample_rate
 
-    # ── jambonz -> Pipecat ─────────────────────────────────────────
+    async def serialize(self, frame: Frame) -> str | bytes | None:
+        """Serialize a Pipecat frame to the jambonz WebSocket format.
 
-    async def deserialize(self, data: str | bytes) -> Frame | None:
-        """Turn one websocket message into a Pipecat frame.
-
-        A `str` is the preamble -- one JSON object, before any audio, carrying
-        the geometry and the call's identity. Everything else is raw L16.
+        Audio is returned as ``bytes``; a ``str`` would be delivered as a text
+        frame, which jambonz interprets as a command rather than as audio.
 
         Args:
-            data: One websocket message.
+            frame: The Pipecat frame to serialize.
 
         Returns:
-            An ``InputAudioRawFrame`` for audio, or None for the preamble and
-            for audio that cannot yet be interpreted.
+            Raw PCM bytes for audio, a JSON string for commands, or None when
+            there is nothing to send.
+        """
+        if (
+            self._params.disconnect_on_end
+            and not self._disconnect_sent
+            and isinstance(frame, (EndFrame, CancelFrame))
+        ):
+            self._disconnect_sent = True
+            return json.dumps({"type": "disconnect"})
+
+        if isinstance(frame, InterruptionFrame):
+            return json.dumps({"type": "killAudio"})
+
+        if isinstance(frame, AudioRawFrame):
+            if self._jambonz_sample_rate is None:
+                logger.warning("Dropping audio: no jambonz audio preamble has arrived yet.")
+                return None
+
+            serialized_data = await self._output_resampler.resample(
+                frame.audio, frame.sample_rate, self._jambonz_sample_rate
+            )
+            if not serialized_data:
+                # Ignoring in case we don't have audio
+                return None
+            return serialized_data
+
+        if isinstance(frame, (OutputTransportMessageFrame, OutputTransportMessageUrgentFrame)):
+            if self.should_ignore_frame(frame):
+                return None
+            return json.dumps(frame.message)
+
+        return None
+
+    async def deserialize(self, data: str | bytes) -> Frame | None:
+        """Deserialize jambonz WebSocket data to Pipecat frames.
+
+        The first text frame is the preamble, which carries the negotiated
+        audio geometry and the call's identifiers. Later text frames are
+        events: a DTMF digit becomes an InputDTMFFrame, and anything else is
+        ignored. Binary data is raw PCM.
+
+        Args:
+            data: The raw WebSocket data from jambonz.
+
+        Returns:
+            An InputAudioRawFrame for audio, an InputDTMFFrame for a digit, or
+            None for the preamble, for events this does not handle, and for
+            audio that cannot yet be interpreted.
         """
         if isinstance(data, str):
-            self._adopt_preamble(data)
-            return None
+            if not self._preamble_seen:
+                # Set whether or not it parses: jambonz sends one preamble and
+                # it is this frame, so a later event must never be read as one.
+                self._preamble_seen = True
+                self._handle_preamble(data)
+                return None
+            return self._handle_event(data)
 
         if self._jambonz_sample_rate is None:
-            # Audio before the preamble. The rate is genuinely unknown, and
-            # guessing 16000 here would produce audio that sounds almost right
-            # on a narrowband call -- the worst kind of wrong.
+            logger.warning("Dropping audio: no jambonz audio preamble has arrived yet.")
             return None
 
-        resampled = await self._input_resampler.resample(
+        if self._mix_type is not None and self._mix_type != "mono":
+            if not self._warned_mix_type:
+                self._warned_mix_type = True
+                logger.warning(
+                    f"Dropping audio: jambonz is sending mixType={self._mix_type!r}, which carries "
+                    "two channels. Set mixType to 'mono' on the listen verb. Interleaved stereo "
+                    "read as mono would play at double speed with the channels alternating."
+                )
+            return None
+
+        deserialized_data = await self._input_resampler.resample(
             data, self._jambonz_sample_rate, self._sample_rate
         )
-        if not resampled:
+        if not deserialized_data:
+            # Ignoring in case we don't have audio
             return None
 
         return InputAudioRawFrame(
-            audio=resampled,
-            num_channels=1,  # mixType is mono; the verb asks for it
+            audio=deserialized_data,
+            num_channels=1,
             sample_rate=self._sample_rate,
         )
 
-    def _adopt_preamble(self, raw: str) -> None:
-        """Read the one JSON frame jambonz sends before the audio."""
+    def _handle_event(self, raw: str) -> Frame | None:
+        """Read a text frame that arrived after the preamble."""
+        try:
+            event = json.loads(raw)
+        except ValueError:
+            logger.debug("Ignoring an undecodable text frame from jambonz.")
+            return None
+        if not isinstance(event, dict):
+            return None
+
+        # The digit is keyed on "event" and carries the digit directly, unlike
+        # Twilio's nested {"event": "dtmf", "dtmf": {"digit": ...}}.
+        if event.get("event") == "dtmf":
+            digit = event.get("dtmf")
+            try:
+                return InputDTMFFrame(KeypadEntry(digit))
+            except ValueError:
+                logger.debug(
+                    f"Ignoring a DTMF digit jambonz sent that is not on a keypad: {digit!r}"
+                )
+                return None
+
+        # mark and playDone replies, and anything jambonz adds later. Debug
+        # rather than warning: these are normal traffic, not faults.
+        logger.debug(
+            f"Ignoring an unhandled jambonz event: {event.get('type') or event.get('event')!r}"
+        )
+        return None
+
+    def _handle_preamble(self, raw: str) -> None:
+        """Read the JSON frame jambonz sends before the audio starts."""
         try:
             meta = json.loads(raw)
         except ValueError:
-            # Not the preamble. Nothing downstream can use it, and dropping a
-            # frame is better than failing a call over an unexpected message.
+            logger.warning("Ignoring an undecodable text frame from jambonz.")
             return
         if not isinstance(meta, dict):
             return
@@ -189,49 +333,11 @@ class JambonzFrameSerializer(FrameSerializer):
         self._call_sid = meta.get("callSid")
         self._trace_id = meta.get("traceId")
 
+        mix_type = meta.get("mixType")
+        if isinstance(mix_type, str) and mix_type:
+            self._mix_type = mix_type
+
         rate = meta.get("sampleRate")
         if isinstance(rate, int) and rate > 0 and self._params.jambonz_sample_rate is None:
             self._jambonz_sample_rate = rate
-
-    # ── Pipecat -> jambonz ─────────────────────────────────────────
-
-    async def serialize(self, frame: Frame) -> str | bytes | None:
-        """Turn a Pipecat frame into something to write to the socket.
-
-        Audio goes out as ``bytes``; a ``str`` would be delivered as a TEXT
-        frame and jambonz reads TEXT as control, not audio.
-
-        Args:
-            frame: The frame to send.
-
-        Returns:
-            ``bytes`` of raw L16 for audio, a JSON ``str`` for control, or None
-            when there is nothing to send.
-        """
-        if isinstance(frame, InterruptionFrame):
-            # Open the guard before returning, so audio arriving in the same
-            # tick as the flush is already being held.
-            self._guard_until = time.monotonic() + self._params.kill_audio_guard_secs
-            return json.dumps({"type": "killAudio"})
-
-        if isinstance(frame, AudioRawFrame):
-            if time.monotonic() < self._guard_until:
-                # Inside the window. Dropping rather than queueing is correct:
-                # this audio belongs to the turn the caller just interrupted,
-                # so playing it late is worse than not playing it.
-                return None
-
-            if self._jambonz_sample_rate is None:
-                return None
-
-            resampled = await self._output_resampler.resample(
-                frame.audio, frame.sample_rate, self._jambonz_sample_rate
-            )
-            return resampled or None
-
-        if isinstance(frame, (OutputTransportMessageFrame, OutputTransportMessageUrgentFrame)):
-            if self.should_ignore_frame(frame):
-                return None
-            return json.dumps(frame.message)
-
-        return None
+            logger.debug(f"jambonz is forking this call at {rate} Hz.")

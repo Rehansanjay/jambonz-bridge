@@ -125,6 +125,18 @@ summary prints when the socket closes.
 Needs `DEEPGRAM_API_KEY` and `OPENROUTER_API_KEY` in `.env`. `test_card.md` has
 the six lines to speak and how to speak them, so two runs are comparable.
 
+## Running the end-to-end test
+
+    .venv\Scripts\python.exe -u jambonz_bot.py
+
+A real Pipecat bot answering a real jambonz call, using a byte-for-byte copy of
+the serializer in pipecat-ai/pipecat#6112. [VERIFICATION.md](VERIFICATION.md) is
+the test card: five cases, what to press, and what counts as a pass. No carrier
+needed -- a softphone forced to PCMU gives the same 8 kHz geometry as a G.711
+PSTN leg.
+
+[docs/pipecat.md](docs/pipecat.md) is the page for docs.jambonz.org.
+
 ## License
 
 MIT, so jambonz can fork this into their own repository for the example and the
