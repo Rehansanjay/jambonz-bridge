@@ -117,3 +117,8 @@ summary prints when the socket closes.
 
 Needs `DEEPGRAM_API_KEY` and `OPENROUTER_API_KEY` in `.env`. `test_card.md` has
 the six lines to speak and how to speak them, so two runs are comparable.
+
+## License
+
+MIT, so jambonz can fork this into their own repository for the example and the
+docs. See [LICENSE](LICENSE).
