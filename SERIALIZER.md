@@ -41,8 +41,8 @@ rather than a JSON string, and `deserialize` takes the bytes straight to the
 resampler with no parsing step.
 
 **The rate is not fixed.** Exotel hardcodes a default of 8000. jambonz sets the
-fork rate per call through the `listen` verb's `sampleRate`, with 16 kHz the
-default and 8 kHz valid for narrowband SIP. So the jambonz params should take
+fork rate per call through the `listen` verb's `sampleRate`, which defaults to
+8000, with 16000, 24000, 48000 and 64000 also allowed. So the jambonz params should take
 the rate rather than assume one, and the verb array and the serializer have to
 agree.
 
@@ -108,8 +108,12 @@ A 30-second call from a registered softphone through jambonz Cloud, forked to
 **The rate the verb asks for is the rate that arrives.** Ratio 1.01 across
 thirty seconds. Worth stating because the opposite was assumed here first, got
 written into the README, and was wrong: this project claimed jambonz forks at
-8 kHz. It does not. It forks at whatever `sampleRate` the verb set, and the
-default is 16 kHz.
+8 kHz regardless. It does not. It forks at whatever `sampleRate` the verb set.
+
+What this run does **not** establish is the default, because it set
+`sampleRate` to 16000 explicitly. The default is **8000**. An earlier rewrite
+of this section claimed 16 kHz, which was this measurement applied outside the
+conditions it was taken under.
 
 **Framing is fixed at 20 ms.** One distinct frame size across 1514 frames:
 640 bytes, which is 320 samples of 16-bit mono, which is exactly 20 ms at

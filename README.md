@@ -61,15 +61,22 @@ returns a JSON array of verbs that jambonz executes in sequence:
 That is where the bridge sits: a `listen` verb forking caller audio to a
 websocket, with `bidirectionalAudio` enabled for the return path, and
 `killAudio` as the counterpart to Pipecat's `InterruptionFrame`. The fork rate
-is set per call by the verb's `sampleRate`; 16 kHz is the default and 8 kHz is
-valid for narrowband SIP.
+is set per call by the verb's `sampleRate`, which **defaults to 8000**; 16000,
+24000, 48000 and 64000 are the other allowed values.
 
 Measured on a live call rather than taken from the docs: asking for 16 kHz
 delivers 16 kHz (ratio 1.01 over thirty seconds), frames are a fixed 640 bytes
 which is exactly 20 ms, and the socket opens with one JSON frame carrying the
-rate and the call identifiers before it goes pure binary. An earlier version of
-this file said jambonz forks at 8 kHz. That was an assumption, it was wrong, and
-this is what replaced it.
+rate and the call identifiers before it goes pure binary.
+
+Two corrections have passed through that paragraph, and the second is the more
+instructive. An early version of this file assumed jambonz forks at 8 kHz; the
+measurement above replaced it. But the probe **set `sampleRate` to 16000
+explicitly**, so the measurement said nothing about the default, and the
+rewrite claimed 16 kHz was the default anyway. It is 8000. The first error was
+an assumption standing in for a measurement; the second was a measurement
+generalised past the conditions it was taken under, which is the harder one to
+notice.
 
 ## Prior art
 
