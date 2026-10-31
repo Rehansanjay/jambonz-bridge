@@ -128,6 +128,31 @@ async def call_hook(request: Request) -> list[dict]:
     return verb
 
 
+@app.post("/call-hook")
+async def call_status(request: Request) -> dict:
+    """Where the application's call status webhook points.
+
+    jambonz posts the call's progress here -- trying, in-progress, completed --
+    independently of the websocket. It is worth having for two reasons: the
+    route existed in the portal before it existed in this file, so every call
+    was answered with a 404, and `completed` carries the reason a call ended,
+    which the websocket cannot report when the call never got that far.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    logger.info(
+        "call status: {}",
+        {
+            k: payload.get(k)
+            for k in ("call_status", "sip_status", "sip_reason", "call_sid", "duration")
+            if payload.get(k) is not None
+        },
+    )
+    return {}
+
+
 class Narrate(FrameProcessor):
     """Print the five things the PR has to show evidence of.
 
