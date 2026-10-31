@@ -80,6 +80,7 @@ PORT = int(os.getenv("PORT", "8080"))
 PUBLIC_HOST = os.getenv("PUBLIC_HOST", "")  # ngrok host, no scheme
 SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", "16000"))
 HANGUP_DIGIT = os.getenv("HANGUP_DIGIT", "#")
+LOG_FILE = os.getenv("LOG_FILE", "")
 
 SYSTEM_PROMPT = (
     "You are the receptionist at a dental clinic, answering the phone. "
@@ -248,6 +249,15 @@ def main() -> None:
             "Set PUBLIC_HOST to the ngrok host with no scheme, e.g. "
             "set PUBLIC_HOST=1a2b3c.ngrok.app"
         )
+    # The log is the evidence that goes on the PR, so write a plain copy to a
+    # file as well as the console. Redirecting this process's stderr from
+    # PowerShell is not equivalent: 5.1 wraps every line of a native command's
+    # stderr in an ErrorRecord, and the console sink's colour codes survive the
+    # redirect and make the result unquotable.
+    log_path = LOG_FILE or f"run-{SAMPLE_RATE}hz.log"
+    logger.add(log_path, level="DEBUG", colorize=False, backtrace=False, enqueue=True)
+
+    logger.info("log file      {}", log_path)
     logger.info("listening on :{}", PORT)
     logger.info("call hook     https://{}/", PUBLIC_HOST)
     logger.info("websocket     wss://{}/ws", PUBLIC_HOST)

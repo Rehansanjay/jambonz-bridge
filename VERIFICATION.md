@@ -26,13 +26,16 @@ Copy the host out of the forwarding line, without the scheme:
 **Terminal 2** — the bot:
 
 ```
-set PUBLIC_HOST=1a2b3c.ngrok.app
-set SAMPLE_RATE=16000
-.venv\Scripts\python.exe -u jambonz_bot.py > run-wideband.log 2>&1
+$env:PUBLIC_HOST = '1a2b3c.ngrok.app'
+$env:SAMPLE_RATE = '16000'
+.venv\Scripts\python.exe -u jambonz_bot.py
 ```
 
-Redirect to a file for every run. The log *is* the evidence, and scrolling a
-console back is how a detail gets lost.
+The bot writes a plain copy of its log to `run-16000hz.log` on its own -- the
+name follows `SAMPLE_RATE`, and `LOG_FILE` overrides it. Do not redirect it
+instead: Windows PowerShell 5.1 wraps every line of a native command's stderr
+in an ErrorRecord, and the console's colour codes survive the redirect. The
+log *is* the evidence, so it needs to be quotable.
 
 **In the jambonz portal**, once:
 
@@ -69,9 +72,11 @@ Opus, G722 and everything else, so there is nothing to negotiate up to.
 **Bot:**
 
 ```
-set SAMPLE_RATE=8000
-.venv\Scripts\python.exe -u jambonz_bot.py > run-g711.log 2>&1
+$env:SAMPLE_RATE = '8000'
+.venv\Scripts\python.exe -u jambonz_bot.py
 ```
+
+Writes `run-8000hz.log`.
 
 Dial, let the bot greet you, say *"what are your opening hours"*, listen to the
 reply, hang up from the softphone.
@@ -89,9 +94,11 @@ intelligible and plays at normal speed, no warnings.
 **Bot:**
 
 ```
-set SAMPLE_RATE=16000
-.venv\Scripts\python.exe -u jambonz_bot.py > run-wideband.log 2>&1
+$env:SAMPLE_RATE = '16000'
+.venv\Scripts\python.exe -u jambonz_bot.py
 ```
+
+Writes `run-16000hz.log`.
 
 Same short exchange.
 
