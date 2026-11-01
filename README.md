@@ -149,5 +149,4 @@ two commands to apply it.
 
 ## License
 
-MIT, so jambonz can fork this into their own repository for the example and the
-docs. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
