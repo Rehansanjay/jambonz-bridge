@@ -142,7 +142,8 @@ def _reg():
     users = api(f"/Accounts/{os.environ['JAMBONZ_ACCOUNT_SID']}/RegisteredSipUsers")
     if not users:
         raise AssertionError("none -- the softphone is not registered, so nothing can be dialled to it")
-    return ", ".join(str(u.get("name", u)) for u in users)
+    # the endpoint returns bare strings, not objects
+    return ", ".join(u.get("name", str(u)) if isinstance(u, dict) else str(u) for u in users)
 
 
 print()
