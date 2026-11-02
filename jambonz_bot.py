@@ -1,8 +1,7 @@
 r"""The end-to-end test: a real Pipecat bot answering a real jambonz call.
 
-Everything before this was measured in pieces -- the socket from
-`probe_jambonz_socket.py`, the frame handling from `test_jambonz_serializer.py`.
-This is the whole path at once, which is the only thing that proves it: jambonz
+The unit tests exercise the serializer in isolation. This is the whole path at
+once, which is the only thing that proves it: jambonz
 answers a call, forks the audio here, a Pipecat pipeline listens and replies,
 and the caller hears it.
 
@@ -27,9 +26,9 @@ from a registered softphone.
 the narrowband case: run it at 8000 with the softphone on PCMU and the audio
 geometry is the same as a G.711 PSTN carrier, without needing a carrier.
 
-Needs `DEEPGRAM_API_KEY` and `OPENROUTER_API_KEY` in `.env` -- the same two keys
-`step1_pipecat_local.py` uses, so the bot is the same agent, reached over a
-phone instead of a microphone.
+Needs `DEEPGRAM_API_KEY` and `OPENROUTER_API_KEY` in `.env`. Run `preflight.py`
+first; it checks every precondition and fails with the reason rather than letting
+a call fail silently.
 
 Press `#` on the keypad to make the bot hang up. That is not a feature anyone
 would ship; it is here because "the bot ends the call" needs a trigger that
@@ -205,8 +204,8 @@ async def jambonz_call(websocket: WebSocket):
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            # stop_secs matches step1, so turn-taking is comparable between the
-            # microphone run and the phone run rather than being a new variable.
+            # 1.0s rather than the 0.8s default: a caller on a phone pauses
+            # mid-sentence more than someone at a microphone does.
             vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=1.0)),
             serializer=serializer,
         ),

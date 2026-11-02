@@ -1,151 +1,97 @@
-# jambonz-bridge
+# pipecat-jambonz
 
-Running the same voice agent on LiveKit Agents and on Pipecat, to document what
-actually changes when you migrate between them -- and then to write the jambonz
-serializer that Pipecat does not have.
+The jambonz serializer for [Pipecat](https://github.com/pipecat-ai/pipecat), with
+an example bot, its tests, and the docs page.
 
 Pipecat ships serializers for Twilio, Telnyx, Plivo, Exotel, Vonage and Genesys.
-There is none for jambonz, so a Pipecat developer choosing a phone layer has six
-options and jambonz is not one of them.
+`JambonzFrameSerializer` adds jambonz to that list: it connects a Pipecat
+pipeline to a jambonz call over the `listen` verb's websocket, so the agent
+receives the caller's audio and speaks back on the same connection.
 
-## Where it is
+## The verb
 
-- **Step 1 -- done.** `step1_pipecat_local.py`: the smallest Pipecat agent that
-  holds a conversation, on local audio. Same dental-clinic receptionist as the
-  LiveKit agent it is being compared with, down to the two tools.
-- **Step 2 -- done.** The LiveKit agent was already minimal at 77 lines, so the
-  comparison is the two files side by side rather than a rewrite.
-- **Step 3 -- in progress.** The concept map, written from having run both.
-- **Step 4 -- measured.** jambonz Cloud account, SIP client, softphone
-  registered, and a 30-second call forked to a websocket and counted. The three
-  things the serializer needed to know are now facts rather than readings of the
-  docs: the rate is what the verb asked for, framing is fixed at 20 ms, and the
-  one TEXT frame is a preamble rather than a control channel. Numbers in
-  `SERIALIZER.md`. The serializer itself comes next.
+```json
+{
+  "verb": "listen",
+  "url": "wss://your-bot.example.com/ws",
+  "sampleRate": 16000,
+  "mixType": "mono",
+  "passDtmf": true,
+  "bidirectionalAudio": { "enabled": true, "streaming": true, "sampleRate": 16000 }
+}
+```
 
-## What running it has turned up so far
+Three properties have to be set deliberately, and none of their defaults is the
+one you want here:
 
-**A LiveKit agent on `inference.*` holds no provider keys at all.** The agent
-being migrated uses `inference.STT`, `inference.LLM` and `inference.TTS`, so
-migrating it to Pipecat starts with obtaining Deepgram, OpenAI and Cartesia
-credentials the project never needed. That belongs on page one of any migration
-guide and does not appear in either framework's docs.
+- **`streaming` defaults to `false`**, and while it is false the audio your
+  application sends back is discarded. Nothing is logged and no error is
+  raised; the caller simply hears silence.
+- **`sampleRate` defaults to `8000`.** The serializer reads whichever rate you
+  chose out of the preamble, so the same agent handles a narrowband PSTN call
+  and a wideband call with no code change -- but wideband has to be asked for.
+- **`bidirectionalAudio.sampleRate` has no default.** Omitted, your audio is
+  read at the call's negotiated codec rate, which depends on the carrier.
+  jambonz resamples whatever arrives at that rate, but this serializer sends at
+  the `sampleRate` it read from the preamble, so **set the two to the same
+  value**. Mismatched, playback runs fast or slow by exactly that ratio.
 
-**Turn-taking is invisible in one and explicit in the other.** LiveKit hides it
-inside `AgentSession`. Pipecat makes you place the VAD, the aggregator pair and
-the turn analyser yourself -- and placing the VAD on the aggregator instead of
-the transport does not raise anything. It silently fragments turns.
+`mixType` must be `mono`. The serializer refuses `stereo`, which would be read
+as mono at double speed, and `mixed`, which is both legs summed into one channel
+and so carries the agent's own audio back to it.
 
-**Measured, same six-line test card spoken twice:** 2.2x fragmentation speaking
-slowly and clearly, 1.4x at normal phone pace. Every remaining break followed a
-filler word and a pause. The LiveKit agent's own log shows about 1.3x over one
-conversation, so this is a voice-agent problem rather than a Pipecat one.
+## The wire format, measured on a live call
 
-**Latency shape:** STT first byte ~0.5s, LLM first token 0.9-2.0s, TTS first
-audio 0.44-0.73s. The LLM owns roughly two thirds of the budget.
+The socket opens with one JSON text frame carrying the sample rate, the channel
+layout and the call identifiers. Audio then arrives as binary frames of raw
+16-bit PCM, a fixed 640 bytes each, which is exactly 20 ms at 16 kHz.
 
-**Tools are the difference between an answer and an invention.** With none, the
-Pipecat agent invented appointment times and confirmed a booking that did not
-exist -- differently on each of two runs. The LiveKit agent called its tool and
-wrote a real one. Both now have the same two tools.
+Text frames do not stop after the preamble. A DTMF digit arrives as
+`{"event":"dtmf","dtmf":"5","duration":"1600"}` when the verb sets `passDtmf`,
+and `mark` and `playDone` replies arrive on the same socket. Only the first text
+frame is the preamble; the rest are events.
 
-## The jambonz model, from a traced call
+Once the preamble has arrived, `serializer.call_sid` and `serializer.trace_id`
+are available for correlating logs with jambonz's, and `serializer.call_meta`
+holds the whole preamble.
 
-A call arrives, jambonz POSTs to the application webhook, and the webhook
-returns a JSON array of verbs that jambonz executes in sequence:
+## Files
 
-    [{"verb":"pause","length":1.5},
-     {"verb":"play","url":"..."},
-     {"verb":"say","text":"..."}]
+| | |
+| --- | --- |
+| `jambonz_serializer.py` | the serializer, byte-for-byte as submitted upstream |
+| `test_jambonz_serializer.py` | its tests |
+| `jambonz_bot.py` | an example bot: FastAPI call hook, websocket, Deepgram STT/TTS, an LLM |
+| `docs/pipecat.mdx` | the page for docs.jambonz.org |
+| `VERIFICATION.md` | five cases to run against a real call, and what counts as a pass |
 
-That is where the bridge sits: a `listen` verb forking caller audio to a
-websocket, with `bidirectionalAudio` enabled for the return path, and
-`killAudio` as the counterpart to Pipecat's `InterruptionFrame`. The fork rate
-is set per call by the verb's `sampleRate`, which **defaults to 8000**; 16000,
-24000, 48000 and 64000 are the other allowed values.
+Three helpers for working on it:
 
-Measured on a live call rather than taken from the docs: asking for 16 kHz
-delivers 16 kHz (ratio 1.01 over thirty seconds), frames are a fixed 640 bytes
-which is exactly 20 ms, and the socket opens with one JSON frame carrying the
-rate and the call identifiers before it goes pure binary.
+| | |
+| --- | --- |
+| `preflight.py` | checks every precondition for a live call: tunnel, verb rates, account, registration, credentials |
+| `fake_jambonz.py` | drives the bot's websocket with a synthetic preamble, audio and DTMF -- no phone needed |
+| `place_call.py` | rings a registered softphone from jambonz, for when dialling in is inconvenient |
 
-Two corrections have passed through that paragraph, and the second is the more
-instructive. An early version of this file assumed jambonz forks at 8 kHz; the
-measurement above replaced it. But the probe **set `sampleRate` to 16000
-explicitly**, so the measurement said nothing about the default, and the
-rewrite claimed 16 kHz was the default anyway. It is 8000. The first error was
-an assumption standing in for a measurement; the second was a measurement
-generalised past the conditions it was taken under, which is the harder one to
-notice.
+## Running the example
 
-## Prior art
+```
+ngrok http 8080
+$env:PUBLIC_HOST = '<the ngrok host, no scheme>'
+$env:SAMPLE_RATE = '16000'
+.venv\Scripts\python.exe -u jambonz_bot.py
+```
 
-`usetuner/tuner-pipecat-sdk-python` carries a `JambonzFrameSerializer` inline in
-`examples/nova_clinic_pipecat/jambonz_server.py`, written because -- in their
-words -- "Pipecat ships no built-in Jambonz serializer, so we provide one inline
-here". It subclasses `FrameSerializer`, resamples both directions and sends raw
-L16 PCM with no JSON envelope.
+Point a jambonz application's calling webhook at `https://<host>/`, set it as
+the account's device calling application, and dial from a registered softphone.
+`SAMPLE_RATE` sets both rates in the verb at once, which is the pairing that
+matters.
 
-It is an example inside one company's SDK rather than something a Pipecat user
-can import, so the gap in `pipecat/serializers/` stands. It is useful as a
-reference and as evidence that the gap costs people real work.
+Needs `DEEPGRAM_API_KEY` and an LLM key in `.env`. Run `preflight.py` first; it
+fails with the reason rather than letting a call fail silently.
 
-Its caveats say the `listen` verb is unidirectional by default and suggest
-`dial` with `type: "ws"` instead. The documentation says otherwise:
-`bidirectionalAudio.enabled` defaults to **true**, `streaming` defaults to
-false, and `dial` with a websocket type is not mentioned as a two-way audio
-mechanism at all. So the verb array that file actually ships -- `listen` with
-`bidirectionalAudio` -- is the documented path, and its own caveat is stale.
-
-`killAudio` is documented as flushing "any audio that is playing out from the
-bidirectional socket as well as any buffered audio". What that leaves open is
-the race: whether a chunk written by the socket's other end in the same instant
-is flushed with the rest or lands after it. That boundary is what Pipecat's
-`InterruptionFrame` has to be built around. Sam Machin answered it from
-operational experience in the jambonz community Slack on 7 Oct 2026: ordering
-is not guaranteed, and a 50-100ms pause after `killAudio` is the fix. The
-consequence for the serializer is in `SERIALIZER.md`.
-
-## Running the probe
-
-    ngrok http 8080
-    set PUBLIC_HOST=<the ngrok host, no scheme>
-    .venv\Scripts\python.exe -u probe_jambonz_socket.py
-
-Then point a jambonz application's calling webhook at `https://<host>/`, set it
-as the account's device calling application, and dial anything from a registered
-softphone. You will hear nothing -- `listen` forks audio and the app returns no
-`say` or `play`, so silence is correct. Talk for thirty seconds and hang up; the
-summary prints when the socket closes.
-
-## Running step 1
-
-    .venv\Scripts\python.exe step1_pipecat_local.py
-
-Needs `DEEPGRAM_API_KEY` and `OPENROUTER_API_KEY` in `.env`. `test_card.md` has
-the six lines to speak and how to speak them, so two runs are comparable.
-
-## Running the end-to-end test
-
-    .venv\Scripts\python.exe -u jambonz_bot.py
-
-A real Pipecat bot answering a real jambonz call, using a byte-for-byte copy of
-the serializer in pipecat-ai/pipecat#6112.
-
-`fake_jambonz.py` drives that same bot without a phone -- it connects to the
-websocket, sends the preamble, streams 20 ms frames and a DTMF event, and
-reports what came back. It cannot test speech, since a tone is not words, but it
-covers everything up to the LLM:
-
-    .venv\Scripts\python.exe -u jambonz_bot.py          # one terminal
-    .venv\Scripts\python.exe fake_jambonz.py            # the other [VERIFICATION.md](VERIFICATION.md) is
-the test card: five cases, what to press, and what counts as a pass. No carrier
-needed -- a softphone forced to PCMU gives the same 8 kHz geometry as a G.711
-PSTN leg.
-
-[docs/pipecat.mdx](docs/pipecat.mdx) is the page for docs.jambonz.org, written
-in jambonz-fern-config's house style; [docs/FERN-PR.md](docs/FERN-PR.md) has the
-two commands to apply it.
+No carrier is needed. A softphone restricted to G.711 gives the same 8 kHz
+geometry as a PSTN leg.
 
 ## License
 
