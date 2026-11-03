@@ -1,0 +1,76 @@
+name: watch upstream PR
+
+# The serializer in this repo went upstream as pipecat-ai/pipecat#6112. That
+# repo moves at roughly 60 commits a day, so a PR that is clean today can be
+# CONFLICTING next week -- and GitHub tells nobody when it flips. That silence
+# is what has stalled PRs here for weeks before.
+#
+# This checks once a day and fails the run if the PR stops being mergeable,
+# which sends the usual failed-workflow email. No cleverness, just a tripwire.
+#
+# #6112 is to be closed in favour of a PR opened from the jambonz org, and this
+# repo goes with it. A tripwire that starts failing the day that happens is
+# worse than no tripwire, so a closed or merged PR ends the run quietly and
+# says what to do: change PR below to the new number.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # 11:30 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check #6112 is still mergeable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          PR=6112
+          REPO=pipecat-ai/pipecat
+
+          # Nothing to watch once the PR is settled. Say so and stop, rather
+          # than mailing a failure every morning for a PR that is gone.
+          pr_state=$(gh pr view "$PR" --repo "$REPO" --json state --jq .state)
+          if [ "$pr_state" != "OPEN" ]; then
+            echo "$REPO#$PR is $pr_state. Nothing left to watch."
+            echo "::notice::Point PR= at the replacement PR, or delete this workflow."
+            exit 0
+          fi
+
+          # mergeable is computed lazily; an unknown answer means "ask again",
+          # not "broken", so give it a few tries before believing it.
+          for attempt in 1 2 3 4 5; do
+            state=$(gh pr view "$PR" --repo "$REPO" --json mergeable --jq .mergeable)
+            [ "$state" != "UNKNOWN" ] && break
+            echo "mergeable is UNKNOWN (attempt $attempt), waiting for GitHub to compute it"
+            sleep 20
+          done
+
+          behind=$(gh api "repos/$REPO/compare/main...Rehansanjay:pipecat:feat/jambonz-serializer" \
+            --jq .behind_by 2>/dev/null || echo "?")
+
+          review=$(gh pr view "$PR" --repo "$REPO" --json reviewDecision --jq '.reviewDecision // "none"')
+
+          echo "-------------------------------------------"
+          echo " $REPO#$PR"
+          echo " mergeable : $state"
+          echo " behind    : $behind commits"
+          echo " review    : $review"
+          echo "-------------------------------------------"
+
+          if [ "$state" = "CONFLICTING" ]; then
+            echo "::error::#$PR now CONFLICTING. Rebase it onto upstream main before a reviewer sees it."
+            exit 1
+          fi
+
+          if [ "$state" = "UNKNOWN" ]; then
+            echo "::warning::GitHub would not compute mergeability. Not treating that as a conflict."
+          fi
+
+          echo "Still mergeable. Nothing to do."
