@@ -1,8 +1,5 @@
 .venv/
 .env
 __pycache__/
-*.wav
-run-*.log
-
-# pytest
 .pytest_cache/
+*.log

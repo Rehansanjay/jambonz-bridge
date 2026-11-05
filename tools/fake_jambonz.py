@@ -1,15 +1,13 @@
-"""Pretend to be jambonz against the real bot, so tomorrow's call is not the first run.
+"""Act as jambonz against the bot, so its websocket path can be tested without a phone.
 
-The unit tests exercise the serializer in isolation and the smoke test proved the
-HTTP hook answers. Neither drives the websocket, which is where the transport,
-the serializer and the pipeline actually meet -- so that path has never run.
+Connects to /ws, sends the first message jambonz sends, streams 20 ms frames of
+tone at the declared rate, and sends a DTMF event partway through, then reports
+what came back.
 
-This connects to /ws, sends the preamble jambonz sends, streams 20 ms frames at
-the rate the preamble declared, and sends a DTMF text frame partway through.
-Then it reports what the bot did with each.
+Tone is not speech, so STT produces nothing and the LLM never replies. That
+part needs a real call.
 
-It cannot test speech: synthetic tone is not words, so STT produces nothing and
-the LLM never fires. That is the one part only a real call can cover.
+    python tools/fake_jambonz.py [ws://localhost:7860/ws]
 """
 
 import asyncio
@@ -90,5 +88,5 @@ async def main(url: str, seconds: float = 3.0) -> int:
 
 
 if __name__ == "__main__":
-    url = sys.argv[1] if len(sys.argv) > 1 else "ws://127.0.0.1:8098/ws"
+    url = sys.argv[1] if len(sys.argv) > 1 else "ws://localhost:7860/ws"
     sys.exit(asyncio.run(main(url)))

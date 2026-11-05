@@ -1,97 +1,55 @@
-# pipecat-jambonz
+# jambonz Voice Bot Examples
 
-The jambonz serializer for [Pipecat](https://github.com/pipecat-ai/pipecat), with
-an example bot, its tests, and the docs page.
+Examples of voice bots that answer [jambonz](https://jambonz.org) calls with
+[Pipecat](https://github.com/pipecat-ai/pipecat). jambonz handles the call and
+streams its audio to the bot over a websocket using the
+[`listen`](https://docs.jambonz.org/verbs/verbs/listen) verb; Pipecat runs the
+STT, LLM and TTS pipeline and streams the reply back on the same connection.
 
-Pipecat ships serializers for Twilio, Telnyx, Plivo, Exotel, Vonage and Genesys.
-`JambonzFrameSerializer` adds jambonz to that list: it connects a Pipecat
-pipeline to a jambonz call over the `listen` verb's websocket, so the agent
-receives the caller's audio and speaks back on the same connection.
+## Examples
 
-## The verb
+### 🔽 [Inbound Calling](./inbound/)
 
-```json
-{
-  "verb": "listen",
-  "url": "wss://your-bot.example.com/ws",
-  "sampleRate": 16000,
-  "mixType": "mono",
-  "passDtmf": true,
-  "bidirectionalAudio": { "enabled": true, "streaming": true, "sampleRate": 16000 }
-}
-```
+A caller dials a number (or a registered SIP device) routed to a jambonz
+application, and talks to the bot.
 
-Three properties have to be set deliberately, and none of their defaults is the
-one you want here:
-
-- **`streaming` defaults to `false`**, and while it is false the audio your
-  application sends back is discarded. Nothing is logged and no error is
-  raised; the caller simply hears silence.
-- **`sampleRate` defaults to `8000`.** The serializer reads whichever rate you
-  chose out of the preamble, so the same agent handles a narrowband PSTN call
-  and a wideband call with no code change -- but wideband has to be asked for.
-- **`bidirectionalAudio.sampleRate` has no default.** Omitted, your audio is
-  read at the call's negotiated codec rate, which depends on the carrier.
-  jambonz resamples whatever arrives at that rate, but this serializer sends at
-  the `sampleRate` it read from the preamble, so **set the two to the same
-  value**. Mismatched, playback runs fast or slow by exactly that ratio.
-
-`mixType` must be `mono`. The serializer refuses `stereo`, which would be read
-as mono at double speed, and `mixed`, which is both legs summed into one channel
-and so carries the agent's own audio back to it.
-
-## The wire format, measured on a live call
-
-The socket opens with one JSON text frame carrying the sample rate, the channel
-layout and the call identifiers. Audio then arrives as binary frames of raw
-16-bit PCM, a fixed 640 bytes each, which is exactly 20 ms at 16 kHz.
-
-Text frames do not stop after the preamble. A DTMF digit arrives as
-`{"event":"dtmf","dtmf":"5","duration":"1600"}` when the verb sets `passDtmf`,
-and `mark` and `playDone` replies arrive on the same socket. Only the first text
-frame is the preamble; the rest are events.
-
-Once the preamble has arrived, `serializer.call_sid` and `serializer.trace_id`
-are available for correlating logs with jambonz's, and `serializer.call_meta`
-holds the whole preamble.
-
-## Files
-
-| | |
-| --- | --- |
-| `jambonz_serializer.py` | the serializer, byte-for-byte as submitted upstream |
-| `test_jambonz_serializer.py` | its tests |
-| `jambonz_bot.py` | an example bot: FastAPI call hook, websocket, Deepgram STT/TTS, an LLM |
-| `docs/pipecat.mdx` | the page for docs.jambonz.org |
-| `VERIFICATION.md` | five cases to run against a real call, and what counts as a pass |
-
-Three helpers for working on it:
-
-| | |
-| --- | --- |
-| `preflight.py` | checks every precondition for a live call: tunnel, verb rates, account, registration, credentials |
-| `fake_jambonz.py` | drives the bot's websocket with a synthetic preamble, audio and DTMF -- no phone needed |
-| `place_call.py` | rings a registered softphone from jambonz, for when dialling in is inconvenient |
-
-## Running the example
+## Architecture
 
 ```
-ngrok http 8080
-$env:PUBLIC_HOST = '<the ngrok host, no scheme>'
-$env:SAMPLE_RATE = '16000'
-.venv\Scripts\python.exe -u jambonz_bot.py
+Phone Call ↔ jambonz ↔ listen verb / WebSocket ↔ Pipecat ↔ AI Services
 ```
 
-Point a jambonz application's calling webhook at `https://<host>/`, set it as
-the account's device calling application, and dial from a registered softphone.
-`SAMPLE_RATE` sets both rates in the verb at once, which is the pairing that
-matters.
+**Components:**
 
-Needs `DEEPGRAM_API_KEY` and an LLM key in `.env`. Run `preflight.py` first; it
-fails with the reason rather than letting a call fail silently.
+- **jambonz**: SIP and PSTN call handling, and the audio stream
+- **`listen` verb**: forks the caller's audio to a websocket and plays back what the bot sends
+- **`JambonzFrameSerializer`**: converts between jambonz's websocket messages and Pipecat frames
+- **Pipecat**: audio pipeline and AI service orchestration
+- **AI Services**: OpenAI (LLM), Deepgram (STT and TTS)
 
-No carrier is needed. A softphone restricted to G.711 gives the same 8 kHz
-geometry as a PSTN leg.
+## The serializer
+
+`JambonzFrameSerializer` is proposed for Pipecat in
+[pipecat-ai/pipecat#6112](https://github.com/pipecat-ai/pipecat/pull/6112).
+Until it ships in a Pipecat release, the example carries a copy in
+`inbound/jambonz_serializer.py` and its tests in `tests/`. Once released, both
+go and the example imports it from `pipecat.serializers.jambonz`.
+
+Run the tests from the repo root:
+
+```sh
+uv run --project inbound pytest
+```
+
+`tools/fake_jambonz.py` acts as jambonz against a running bot, sending the
+first message, audio and a DTMF event, so the websocket path can be checked
+without placing a call.
+
+## Getting Help
+
+- **Detailed Setup**: see [`inbound/README.md`](./inbound/README.md)
+- **Pipecat Documentation**: [docs.pipecat.ai](https://docs.pipecat.ai)
+- **jambonz Documentation**: [docs.jambonz.org](https://docs.jambonz.org)
 
 ## License
 
