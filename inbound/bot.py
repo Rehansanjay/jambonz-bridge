@@ -30,7 +30,7 @@ from pipecat.transports.websocket.fastapi import (
 )
 from pipecat.workers.runner import WorkerRunner
 
-# Until pipecat-ai/pipecat#6112 is released this is a local copy of the
+# Until pipecat-ai/pipecat#6573 is released this is a local copy of the
 # serializer. Afterwards: from pipecat.serializers.jambonz import JambonzFrameSerializer
 from jambonz_serializer import JambonzFrameSerializer
 

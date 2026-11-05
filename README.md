@@ -30,7 +30,7 @@ Phone Call ↔ jambonz ↔ listen verb / WebSocket ↔ Pipecat ↔ AI Services
 ## The serializer
 
 `JambonzFrameSerializer` is proposed for Pipecat in
-[pipecat-ai/pipecat#6112](https://github.com/pipecat-ai/pipecat/pull/6112).
+[pipecat-ai/pipecat#6573](https://github.com/pipecat-ai/pipecat/pull/6573).
 Until it ships in a Pipecat release, the example carries a copy in
 `inbound/jambonz_serializer.py` and its tests in `tests/`. Once released, both
 go and the example imports it from `pipecat.serializers.jambonz`.
