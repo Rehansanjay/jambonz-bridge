@@ -20,6 +20,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.runner.run import app
 from pipecat.runner.types import WebSocketRunnerArguments
+from pipecat.serializers.jambonz import JambonzFrameSerializer
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.openai.llm import OpenAILLMService
@@ -29,10 +30,6 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 from pipecat.workers.runner import WorkerRunner
-
-# Until pipecat-ai/pipecat#6573 is released this is a local copy of the
-# serializer. Afterwards: from pipecat.serializers.jambonz import JambonzFrameSerializer
-from jambonz_serializer import JambonzFrameSerializer
 
 load_dotenv(override=True)
 

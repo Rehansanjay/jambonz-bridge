@@ -5,13 +5,11 @@ description = "jambonz inbound calling example for Pipecat"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "pipecat-ai[websocket,openai,silero,deepgram,runner]>=1.15.0",
+  "pipecat-ai[websocket,openai,silero,deepgram,runner]>=1.16.0",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=8",
-    "pytest-asyncio>=0.24",
     "ruff>=0.12.11,<1",
     "websockets>=13",
 ]
