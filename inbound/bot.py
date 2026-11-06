@@ -103,6 +103,11 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(
+            # Run the pipeline at the call's rate, so the serializer never
+            # resamples. Resampling in the serializer happens after the output
+            # transport paces audio, so jambonz receives it in uneven bursts.
+            audio_in_sample_rate=SAMPLE_RATE,
+            audio_out_sample_rate=SAMPLE_RATE,
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
