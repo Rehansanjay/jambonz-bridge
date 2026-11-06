@@ -20,6 +20,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.runner.run import app
 from pipecat.runner.types import WebSocketRunnerArguments
+from pipecat.serializers.jambonz import JambonzFrameSerializer
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.openai.llm import OpenAILLMService
@@ -30,14 +31,11 @@ from pipecat.transports.websocket.fastapi import (
 )
 from pipecat.workers.runner import WorkerRunner
 
-# Until pipecat-ai/pipecat#6573 is released this is a local copy of the
-# serializer. Afterwards: from pipecat.serializers.jambonz import JambonzFrameSerializer
-from jambonz_serializer import JambonzFrameSerializer
-
 load_dotenv(override=True)
 
-# 8000 for narrowband (PSTN), 16000 for wideband. The serializer reads the rate
-# back from the call's first message, so nothing else needs to change.
+# 8000 for narrowband (PSTN), 16000 for wideband. Used for both directions:
+# the rate jambonz sends the caller's audio at, and the rate it reads the bot's
+# audio at.
 SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", "16000"))
 
 
@@ -130,9 +128,13 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
 async def bot(runner_args: WebSocketRunnerArguments):
     """Main bot entry point, called by the Pipecat runner for each call."""
 
-    # The serializer reads the call's sample rate, callSid and traceId from the
-    # first message jambonz sends, and handles DTMF, marks and killAudio.
-    serializer = JambonzFrameSerializer()
+    # The serializer reads the caller's audio rate, callSid and traceId from the
+    # first message jambonz sends, and handles DTMF, marks and killAudio. The rate
+    # jambonz reads the bot's audio at isn't in that message, so it is set here
+    # to the verb's bidirectionalAudio.sampleRate.
+    serializer = JambonzFrameSerializer(
+        JambonzFrameSerializer.InputParams(audio_out_sample_rate=SAMPLE_RATE)
+    )
 
     transport = FastAPIWebsocketTransport(
         websocket=runner_args.websocket,

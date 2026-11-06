@@ -100,10 +100,13 @@ Three of these have defaults that don't work for a bot:
   jambonz discards the audio the bot sends back. Nothing is logged; the caller
   hears silence.
 - **`sampleRate` defaults to `8000`.** Ask for `16000` to get wideband audio
-  from a wideband call. `SAMPLE_RATE` in `.env` sets it; the serializer reads
-  the rate from the call, so the bot itself doesn't change.
-- **`bidirectionalAudio.sampleRate` has no default.** Set it to the same value
-  as `sampleRate`. If they differ, the bot's speech plays fast or slow.
+  from a wideband call. The serializer reads this rate from the call.
+- **`bidirectionalAudio.sampleRate` has no default.** It is the rate jambonz
+  reads the bot's audio at, and it isn't reported on the websocket, so the bot
+  passes the same value to the serializer as `audio_out_sample_rate`. If the
+  two differ, the bot's speech plays fast or slow.
+
+`SAMPLE_RATE` in `.env` sets all three.
 
 `mixType` must be `mono`. The serializer rejects `stereo` and `mixed`.
 

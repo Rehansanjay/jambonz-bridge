@@ -29,21 +29,17 @@ Phone Call ↔ jambonz ↔ listen verb / WebSocket ↔ Pipecat ↔ AI Services
 
 ## The serializer
 
-`JambonzFrameSerializer` is proposed for Pipecat in
-[pipecat-ai/pipecat#6573](https://github.com/pipecat-ai/pipecat/pull/6573).
-Until it ships in a Pipecat release, the example carries a copy in
-`inbound/jambonz_serializer.py` and its tests in `tests/`. Once released, both
-go and the example imports it from `pipecat.serializers.jambonz`.
+`JambonzFrameSerializer` ships with Pipecat from 1.16.0, in
+`pipecat.serializers.jambonz`. It reads the call's sample rate, `callSid` and
+`traceId` from the first message jambonz sends. The one setting it needs is
+`audio_out_sample_rate`, which must match the `listen` verb's
+`bidirectionalAudio.sampleRate`.
 
-Run the tests from the repo root:
-
-```sh
-uv run --project inbound pytest
-```
+## Testing without a call
 
 `tools/fake_jambonz.py` acts as jambonz against a running bot, sending the
 first message, audio and a DTMF event, so the websocket path can be checked
-without placing a call.
+without placing a call. See [`inbound/README.md`](./inbound/README.md#testing-without-a-call).
 
 ## Getting Help
 
