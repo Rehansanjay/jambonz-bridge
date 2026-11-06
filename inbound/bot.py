@@ -33,8 +33,9 @@ from pipecat.workers.runner import WorkerRunner
 
 load_dotenv(override=True)
 
-# 8000 for narrowband (PSTN), 16000 for wideband. The serializer reads the rate
-# back from the call's first message, so nothing else needs to change.
+# 8000 for narrowband (PSTN), 16000 for wideband. Used for both directions:
+# the rate jambonz sends the caller's audio at, and the rate it reads the bot's
+# audio at.
 SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", "16000"))
 
 
@@ -103,11 +104,6 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(
-            # Run the pipeline at the call's rate, so the serializer never
-            # resamples. Resampling in the serializer happens after the output
-            # transport paces audio, so jambonz receives it in uneven bursts.
-            audio_in_sample_rate=SAMPLE_RATE,
-            audio_out_sample_rate=SAMPLE_RATE,
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
@@ -132,9 +128,13 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool):
 async def bot(runner_args: WebSocketRunnerArguments):
     """Main bot entry point, called by the Pipecat runner for each call."""
 
-    # The serializer reads the call's sample rate, callSid and traceId from the
-    # first message jambonz sends, and handles DTMF, marks and killAudio.
-    serializer = JambonzFrameSerializer()
+    # The serializer reads the caller's audio rate, callSid and traceId from the
+    # first message jambonz sends, and handles DTMF, marks and killAudio. The rate
+    # jambonz reads the bot's audio at isn't in that message, so it is set here
+    # to the verb's bidirectionalAudio.sampleRate.
+    serializer = JambonzFrameSerializer(
+        JambonzFrameSerializer.InputParams(audio_out_sample_rate=SAMPLE_RATE)
+    )
 
     transport = FastAPIWebsocketTransport(
         websocket=runner_args.websocket,

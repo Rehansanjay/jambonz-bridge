@@ -30,8 +30,10 @@ Phone Call ↔ jambonz ↔ listen verb / WebSocket ↔ Pipecat ↔ AI Services
 ## The serializer
 
 `JambonzFrameSerializer` ships with Pipecat from 1.16.0, in
-`pipecat.serializers.jambonz`. It needs no configuration: it reads the call's
-sample rate, `callSid` and `traceId` from the first message jambonz sends.
+`pipecat.serializers.jambonz`. It reads the call's sample rate, `callSid` and
+`traceId` from the first message jambonz sends. The one setting it needs is
+`audio_out_sample_rate`, which must match the `listen` verb's
+`bidirectionalAudio.sampleRate`.
 
 ## Testing without a call
 
